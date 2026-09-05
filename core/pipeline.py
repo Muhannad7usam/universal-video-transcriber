@@ -10,10 +10,27 @@ from core.formatting.transcript import (
     clean_transcript,
     timestamped_transcript,
     language_label,
-    format_caption_text,
 )
 from core.output.store import save_result
 from core.security.filenames import inside
+
+
+def _caption_output_looks_usable(segments, clean: str, duration: float | None) -> bool:
+    if not segments or not clean.strip():
+        return False
+
+    words = [w for w in clean.split() if w.strip()]
+    if len(words) < 3:
+        return False
+
+    # If a long video produced almost no caption text, prefer Whisper instead
+    # of presenting a misleadingly "complete" result.
+    if duration and duration >= 120:
+        minutes = duration / 60
+        if len(words) / max(minutes, 1) < 5:
+            return False
+
+    return True
 
 
 def run_job(job_id, url, store, progress=lambda p, s: None, requested_language: str | None = None):
@@ -47,12 +64,15 @@ def run_job(job_id, url, store, progress=lambda p, s: None, requested_language: 
                 )
                 if caption_path:
                     segments = normalize_segments(caption_path)
-                    clean = format_caption_text(
-                        " ".join(segment["text"] for segment in segments)
-                    )
+                    clean = clean_transcript(segments)
                     language_code = requested_language or cap[1].split("-")[0]
+
+                    if not _caption_output_looks_usable(segments, clean, duration):
+                        clean = ""
+                        segments = []
             except Exception:
                 clean = ""
+                segments = []
 
         if not clean:
             method = "whisper"
