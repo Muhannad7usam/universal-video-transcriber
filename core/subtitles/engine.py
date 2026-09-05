@@ -29,11 +29,11 @@ def _track_candidates(info: dict, key: str, preferred_language: str | None):
     source_language = _normalize_lang(info.get("language"))
 
     if preferred:
-        # If the extractor knows the video's spoken language and it conflicts
-        # with the user's selected language, do not silently use a translated
-        # automatic-caption track. The user selected a spoken language, not a
-        # translation target.
-        if key == "automatic_captions" and source_language and source_language != preferred:
+        # The selector describes the spoken source language. If the extractor
+        # confidently reports a different source language, a caption track in
+        # the requested language is almost certainly a translation, so skip it
+        # and let Whisper transcribe the actual audio instead.
+        if source_language and source_language != preferred:
             return []
         return [
             (lang, entries)
@@ -41,9 +41,10 @@ def _track_candidates(info: dict, key: str, preferred_language: str | None):
             if _normalize_lang(lang) == preferred
         ]
 
-    # Auto Detect should never pick an arbitrary alphabetically-first translated
-    # YouTube caption (for example "ab"). Prefer the extractor's original
-    # language, then explicitly original tracks, then a sole manual subtitle.
+    # Auto Detect should never pick an arbitrary translated YouTube caption
+    # (for example the alphabetically-first "ab" track). Prefer the extractor's
+    # original language, then explicitly original tracks, then a sole manual
+    # subtitle. If none is safe, Whisper should detect the spoken language.
     if source_language:
         exact = [
             (lang, entries)
