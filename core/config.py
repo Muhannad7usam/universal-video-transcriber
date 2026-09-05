@@ -17,8 +17,15 @@ class Settings(BaseSettings):
     whisper_vad_min_silence_ms: int = 450
     whisper_vad_speech_pad_ms: int = 220
 
+    # Long-form handling. Short/medium videos run directly for minimum latency;
+    # long/extremely-long videos are processed in bounded-memory chunks.
+    # Set MAX_VIDEO_DURATION_SECONDS to 0 for no application-level duration cap.
+    max_video_duration_seconds: int = 0
+    long_video_chunk_threshold_seconds: int = 3600
+    long_video_chunk_seconds: int = 1800
+    long_video_chunk_overlap_seconds: int = 3
+
     max_playlist_items: int = 100
-    max_video_duration_seconds: int = 14400
 
     # One heavy Whisper job at a time avoids CPU/GPU contention and usually
     # finishes each individual transcript faster. Override in deployment if the
@@ -33,7 +40,7 @@ class Settings(BaseSettings):
     # Repeated URL + language requests can be restored instantly. Bump the
     # version whenever transcription semantics change materially.
     transcription_cache_enabled: bool = True
-    transcription_cache_version: str = "uvt-2026-09-05-performance-v2"
+    transcription_cache_version: str = "uvt-2026-09-05-longform-v1"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
