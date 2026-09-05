@@ -12,6 +12,19 @@ Paste a video or playlist link. Editors can choose the spoken language or leave 
 
 Playlists support one video, arbitrary selected videos, a range, or the entire playlist. Results include clean and timestamped transcripts, copy controls, search, language/method/coverage labels, and live progress updates.
 
+## Video Lengths: Short to Extremely Long
+
+The default product has **no application-level video-duration cap**. It automatically handles:
+
+- **Short:** under 15 minutes
+- **Medium:** 15 minutes to under 1 hour
+- **Long:** 1 hour to under 4 hours
+- **Extremely long:** 4 hours and above, including multi-hour recordings
+
+Short and medium media use the fastest direct path. Media of 1 hour or more is automatically processed in bounded-memory chunks (30 minutes by default) with a small overlap at chunk boundaries. Each temporary chunk is deleted as soon as it is processed. This prevents a multi-hour recording from requiring the entire decoded audio waveform to fit in RAM at once while preserving full-timeline timestamps.
+
+`MAX_VIDEO_DURATION_SECONDS=0` means unlimited at the application layer. Deployments that need a policy cap can set a positive number without changing code. The practical limit for extremely long media is therefore the machine's available disk space, compute time, network/source availability, and uptime rather than an artificial four-hour cutoff.
+
 ## CMD Edition
 
 ```text
@@ -32,7 +45,8 @@ The pipeline is adaptive rather than forcing one slow path for every video:
 4. If captions are missing, translated, incomplete, or unavailable, download the compressed audio stream directly instead of converting the whole source to WAV first.
 5. Run `faster-whisper` with VAD, no translation, selected-language prompting, hallucination thresholds, and live segment progress.
 6. Adaptive model selection uses `large-v3` on a working CUDA GPU for maximum multilingual accuracy and `large-v3-turbo` on CPU for a much better speed/accuracy balance than the previous medium/small path.
-7. One heavy inference job runs per machine by default to avoid CPU/GPU contention. Deployments with more compute can override `MAX_CONCURRENT_JOBS`.
+7. For long media, split only the audio working stream into lossless 16 kHz mono FLAC chunks, process them sequentially, merge the timestamps, remove boundary overlap, and delete each temporary chunk immediately.
+8. One heavy inference job runs per machine by default to avoid CPU/GPU contention. Deployments with more compute can override `MAX_CONCURRENT_JOBS`.
 
 The first use of a Whisper model can take longer because its model files must be downloaded and loaded. Later runs reuse the local Hugging Face model cache.
 
@@ -46,7 +60,7 @@ The system transcribes spoken content; it does not intentionally translate it.
 
 ## Progress
 
-Single jobs and playlist groups use Server-Sent Events (SSE) for responsive progress without constant browser polling. Stages include cache lookup, caption checks, audio download, model loading, transcription, formatting, saving, and caching. Whisper segment timestamps advance the progress bar during transcription instead of leaving the UI stuck at a fixed percentage.
+Single jobs and playlist groups use Server-Sent Events (SSE) for responsive progress without constant browser polling. Stages include cache lookup, caption checks, audio download, model loading, transcription, formatting, saving, and caching. Whisper segment timestamps advance the progress bar during transcription instead of leaving the UI stuck at a fixed percentage. Chunked multi-hour jobs map each chunk's progress back onto the complete video timeline.
 
 ## Configuration
 
@@ -58,6 +72,10 @@ WHISPER_DEVICE=auto
 WHISPER_COMPUTE_TYPE=auto
 WHISPER_BEAM_SIZE=3
 MAX_CONCURRENT_JOBS=1
+MAX_VIDEO_DURATION_SECONDS=0
+LONG_VIDEO_CHUNK_THRESHOLD_SECONDS=3600
+LONG_VIDEO_CHUNK_SECONDS=1800
+LONG_VIDEO_CHUNK_OVERLAP_SECONDS=3
 TRANSCRIPTION_CACHE_ENABLED=true
 RESULT_RETENTION_DAYS=10
 ```
@@ -70,7 +88,7 @@ The Web UI uses external JavaScript event listeners, allowing a strict `script-s
 
 ## Retention
 
-Generated transcripts and the repeat-result cache are retained for up to 10 days. Temporary media is removed after processing. Cleanup runs periodically and can be inspected with:
+Generated transcripts and the repeat-result cache are retained for up to 10 days. Temporary media is removed after processing. Long-form FLAC chunks are transient working files and are deleted chunk-by-chunk during transcription. Cleanup runs periodically and can be inspected with:
 
 ```text
 python -m scripts.cleanup --dry-run
