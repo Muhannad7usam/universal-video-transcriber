@@ -1,7 +1,7 @@
 import hashlib
 import json
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from core.config import settings
@@ -32,6 +32,12 @@ def restore_cached_result(url: str, requested_language: str | None, job_id: str)
         return None
 
     try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=settings.result_retention_days)
+        modified = datetime.fromtimestamp(source.stat().st_mtime, timezone.utc)
+        if modified < cutoff:
+            shutil.rmtree(source, ignore_errors=True)
+            return None
+
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         title = metadata.get("title") or "Untitled video"
         destination = result_dir(title, job_id)
