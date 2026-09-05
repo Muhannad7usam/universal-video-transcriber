@@ -29,8 +29,23 @@ const i18n = {
     method: "Method",
     coverage: "Coverage",
     fullVideo: "Full video",
+    time: "Time",
+    cached: "instant cache",
     copied: "Copied ✓",
-    analyzing: "Analyzing link…"
+    analyzing: "Analyzing link…",
+    queued: "Queued",
+    checking_cache: "Checking previous result",
+    checking_captions: "Checking captions",
+    downloading_captions: "Downloading captions",
+    cleaning_captions: "Cleaning captions",
+    downloading_audio: "Downloading audio",
+    loading_model: "Loading transcription model",
+    transcribing: "Transcribing speech",
+    formatting: "Formatting transcript",
+    saving: "Saving result",
+    caching: "Optimizing next run",
+    completed: "Completed",
+    failed: "Failed"
   },
   ar: {
     headline: "حوّل الفيديوهات لـ Transcripts مرتبة.",
@@ -58,12 +73,27 @@ const i18n = {
     method: "الطريقة",
     coverage: "التغطية",
     fullVideo: "الفيديو كامل",
+    time: "الوقت",
+    cached: "نتيجة محفوظة فوراً",
     copied: "اتنسخ ✓",
-    analyzing: "بنفحص اللينك…"
+    analyzing: "بنفحص اللينك…",
+    queued: "في الانتظار",
+    checking_cache: "بنفحص نتيجة سابقة",
+    checking_captions: "بنفحص الـ Captions",
+    downloading_captions: "بنحمّل الـ Captions",
+    cleaning_captions: "بننضّف الـ Captions",
+    downloading_audio: "بنحمّل الصوت",
+    loading_model: "بنجهز موديل التفريغ",
+    transcribing: "بنفّرغ الكلام",
+    formatting: "بنرتب الـ Transcript",
+    saving: "بنحفظ النتيجة",
+    caching: "بنسرّع التشغيل الجاي",
+    completed: "اكتمل",
+    failed: "فشل"
   }
 };
 
-let lang = "en";
+let lang = localStorage.getItem("uvt-ui-language") || "en";
 let currentView = "clean";
 let searchMatches = [];
 let searchIndex = 0;
@@ -84,7 +114,9 @@ function fmt(sec) {
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
   const s = sec % 60;
-  return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
+  return h
+    ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+    : `${m}:${String(s).padStart(2, "0")}`;
 }
 
 async function api(url, opt) {
@@ -99,9 +131,14 @@ function selectedLanguage() {
   return value === "auto" ? null : value;
 }
 
+function stageLabel(state) {
+  return i18n[lang][state] || String(state || "").replaceAll("_", " ");
+}
+
 function applyUiLanguage(next) {
-  lang = next;
-  document.documentElement.lang = lang === "ar" ? "ar" : "en";
+  lang = next === "ar" ? "ar" : "en";
+  localStorage.setItem("uvt-ui-language", lang);
+  document.documentElement.lang = lang;
   document.documentElement.dir = lang === "ar" ? "rtl" : "ltr";
   document.body.classList.toggle("rtl", lang === "ar");
   document.querySelectorAll("[data-i18n]").forEach(x => {
@@ -123,9 +160,11 @@ async function loadLanguages() {
       return `<option value="${esc(item.code)}">${esc(label)}</option>`;
     }).join("");
   } catch (_) {
-    // Keep the built-in common language options if the optional language endpoint fails.
+    // Keep the built-in options if the endpoint is temporarily unavailable.
   }
-  if ([...languageSelect.options].some(o => o.value === saved)) languageSelect.value = saved;
+  if ([...languageSelect.options].some(o => o.value === saved)) {
+    languageSelect.value = saved;
+  }
 }
 
 languageSelect?.addEventListener("change", () => {
@@ -136,10 +175,14 @@ document.querySelectorAll("[data-lang]").forEach(button => {
   button.addEventListener("click", () => applyUiLanguage(button.dataset.lang));
 });
 
-$("#start").addEventListener("click", async () => {
+async function startTranscription() {
   const url = $("#url").value.trim();
   if (!url) return;
+
+  const start = $("#start");
+  start.disabled = true;
   content.innerHTML = `<div class="card"><div class="muted">${esc(i18n[lang].analyzing)}</div></div>`;
+
   try {
     const j = await api("/api/analyze", {
       method: "POST",
@@ -149,24 +192,69 @@ $("#start").addEventListener("click", async () => {
     j.type === "video" ? watch(j.job_id) : renderPlaylist(j);
   } catch (e) {
     content.innerHTML = `<div class="card error">${esc(e.message)}</div>`;
+  } finally {
+    start.disabled = false;
   }
+}
+
+$("#start")?.addEventListener("click", startTranscription);
+$("#url")?.addEventListener("keydown", e => {
+  if (e.key === "Enter") startTranscription();
 });
+
+function renderJobProgress(j) {
+  const status = $("#status");
+  const bar = $("#bar");
+  if (status) status.textContent = `${stageLabel(j.state)} · ${j.progress}%`;
+  if (bar) bar.style.width = `${Math.max(0, Math.min(100, j.progress || 0))}%`;
+}
 
 function watch(id) {
   content.innerHTML = `<div class="card"><div id="status">${esc(i18n[lang].analyzing)}</div><div class="progress"><div id="bar" class="bar" style="width:0%"></div></div><div id="result"></div></div>`;
-  const tick = async () => {
-    try {
-      const j = await api(`/api/jobs/${id}`);
-      $("#status").textContent = `${(j.state || "").replaceAll("_", " ")} ${j.progress}%`;
-      $("#bar").style.width = `${j.progress}%`;
-      if (j.state === "completed") await renderResult(j);
-      else if (j.state === "failed") $("#result").innerHTML = `<p class="error">${esc(j.error)}</p>`;
-      else setTimeout(tick, 800);
-    } catch (e) {
-      $("#result").innerHTML = `<p class="error">${esc(e.message)}</p>`;
+
+  let finished = false;
+  let fallbackStarted = false;
+  const source = new EventSource(`/api/jobs/${encodeURIComponent(id)}/events`);
+
+  const handle = async j => {
+    if (finished) return;
+    renderJobProgress(j);
+    if (j.state === "completed") {
+      finished = true;
+      source.close();
+      await renderResult(j);
+    } else if (j.state === "failed") {
+      finished = true;
+      source.close();
+      const host = $("#result");
+      if (host) host.innerHTML = `<p class="error">${esc(j.error || "Transcription failed")}</p>`;
     }
   };
-  tick();
+
+  source.onmessage = event => {
+    try { handle(JSON.parse(event.data)); } catch (_) {}
+  };
+
+  source.onerror = () => {
+    source.close();
+    if (!finished && !fallbackStarted) {
+      fallbackStarted = true;
+      pollJob(id, handle);
+    }
+  };
+}
+
+async function pollJob(id, handle) {
+  try {
+    const j = await api(`/api/jobs/${id}`);
+    await handle(j);
+    if (!["completed", "failed"].includes(j.state)) {
+      setTimeout(() => pollJob(id, handle), 900);
+    }
+  } catch (e) {
+    const host = $("#result");
+    if (host) host.innerHTML = `<p class="error">${esc(e.message)}</p>`;
+  }
 }
 
 function renderPlaylist(j) {
@@ -175,10 +263,10 @@ function renderPlaylist(j) {
   content.innerHTML = `<div class="card">
     <div class="toolbar"><div><h2>${esc(j.title)}</h2><p class="muted">${j.count} videos</p></div></div>
     <div class="actions">
-      <button class="chip" data-mode="one">${esc(i18n[lang].one)}</button>
-      <button class="chip active" data-mode="selected">${esc(i18n[lang].selected)}</button>
-      <button class="chip" data-mode="range">${esc(i18n[lang].range)}</button>
-      <button class="chip" data-mode="all">${esc(i18n[lang].all)}</button>
+      <button class="chip" type="button" data-mode="one">${esc(i18n[lang].one)}</button>
+      <button class="chip active" type="button" data-mode="selected">${esc(i18n[lang].selected)}</button>
+      <button class="chip" type="button" data-mode="range">${esc(i18n[lang].range)}</button>
+      <button class="chip" type="button" data-mode="all">${esc(i18n[lang].all)}</button>
     </div>
     <div id="list" class="playlist-grid">${j.items.map(x => `<label class="item">
       <input type="checkbox" data-index="${x.index}">
@@ -189,14 +277,22 @@ function renderPlaylist(j) {
       <input id="from" type="number" min="1" max="${j.count}" value="1">
       <input id="to" type="number" min="1" max="${j.count}" value="${Math.min(5, j.count)}">
     </div>
-    <button id="go" class="primary" style="margin-top:18px;height:46px">${esc(i18n[lang].go)}</button>
+    <button id="go" class="primary" type="button" style="margin-top:18px;height:46px">${esc(i18n[lang].go)}</button>
   </div>`;
 }
 
 function selectMode(mode) {
   playMode = mode;
   document.querySelectorAll("[data-mode]").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
-  document.querySelectorAll("#list input").forEach(x => x.checked = mode === "all");
+  const checks = [...document.querySelectorAll("#list input")];
+  if (mode === "all") checks.forEach(x => { x.checked = true; });
+  if (mode === "one") {
+    let kept = false;
+    checks.forEach(x => {
+      if (x.checked && !kept) kept = true;
+      else x.checked = false;
+    });
+  }
   const range = $("#range");
   if (range) range.style.display = mode === "range" ? "block" : "none";
 }
@@ -204,6 +300,7 @@ function selectMode(mode) {
 async function submitPlaylist() {
   const j = currentPlaylist;
   if (!j) return;
+
   let items = [];
   if (playMode === "all") {
     items = j.items.map(x => x.index);
@@ -215,9 +312,12 @@ async function submitPlaylist() {
   } else {
     items = [...document.querySelectorAll("#list input:checked")].map(x => +x.dataset.index);
   }
+
   if (playMode === "one") items = items.slice(0, 1);
   if (!items.length) return;
 
+  const go = $("#go");
+  if (go) go.disabled = true;
   try {
     const r = await api("/api/playlist/jobs", {
       method: "POST",
@@ -231,19 +331,50 @@ async function submitPlaylist() {
     renderGroup(r.group_id);
   } catch (e) {
     content.insertAdjacentHTML("afterbegin", `<div class="card error">${esc(e.message)}</div>`);
+    if (go) go.disabled = false;
   }
 }
 
-async function renderGroup(gid) {
+function paintGroup(g) {
+  const host = $("#group");
+  if (!host) return;
+  host.innerHTML = g.jobs.map(x => `<button class="item" type="button" data-job-id="${esc(x.id)}" style="width:100%;margin:8px 0;text-align:left">
+    <span>${esc(x.item_index)}. ${esc(x.title)}</span>
+    <span class="muted">${esc(stageLabel(x.state))} ${esc(x.progress)}%</span>
+  </button>`).join("");
+}
+
+function renderGroup(gid) {
   content.innerHTML = `<div class="split"><aside class="card"><h2>${esc(i18n[lang].playlist)}</h2><div id="group"></div></aside><section class="card"><div id="groupResult" class="muted">${esc(i18n[lang].selectCompleted)}</div></section></div>`;
-  const tick = async () => {
+
+  let fallbackStarted = false;
+  const source = new EventSource(`/api/groups/${encodeURIComponent(gid)}/events`);
+  source.onmessage = event => {
     try {
-      const g = await api(`/api/groups/${gid}`);
-      $("#group").innerHTML = g.jobs.map(x => `<button class="item" type="button" data-job-id="${esc(x.id)}" style="width:100%;margin:8px 0;text-align:left"><span>${esc(x.item_index)}. ${esc(x.title)}</span><span class="muted">${esc(x.state)} ${x.progress}%</span></button>`).join("");
-      if (!g.jobs.every(x => ["completed", "failed"].includes(x.state))) setTimeout(tick, 900);
+      const g = JSON.parse(event.data);
+      paintGroup(g);
+      if (g.jobs.length && g.jobs.every(x => ["completed", "failed"].includes(x.state))) {
+        source.close();
+      }
     } catch (_) {}
   };
-  tick();
+  source.onerror = () => {
+    source.close();
+    if (!fallbackStarted) {
+      fallbackStarted = true;
+      pollGroup(gid);
+    }
+  };
+}
+
+async function pollGroup(gid) {
+  try {
+    const g = await api(`/api/groups/${gid}`);
+    paintGroup(g);
+    if (!g.jobs.every(x => ["completed", "failed"].includes(x.state))) {
+      setTimeout(() => pollGroup(gid), 1200);
+    }
+  } catch (_) {}
 }
 
 async function openGroupJob(id) {
@@ -262,18 +393,23 @@ async function openGroupJob(id) {
 }
 
 function resultMarkup(r, j) {
+  const extra = [];
+  if (r.processing_seconds != null) extra.push(`<span class="status-pill">${esc(i18n[lang].time)}: ${esc(Number(r.processing_seconds).toFixed(1))}s</span>`);
+  if (r.cache_hit) extra.push(`<span class="status-pill">${esc(i18n[lang].cached)}</span>`);
+
   return `<div class="toolbar"><div><h2>${esc(r.title || j.title)}</h2><div class="result-meta">
     <span class="status-pill">${esc(i18n[lang].language)}: ${esc(r.language || "Unknown")}</span>
     <span class="status-pill">${esc(i18n[lang].method)}: ${esc(r.method || "")}</span>
     <span class="status-pill">${esc(i18n[lang].coverage)}: ${esc(i18n[lang].fullVideo)}</span>
+    ${extra.join("")}
   </div></div></div>
   <div class="actions">
-    <button class="chip active" data-result-action="clean">${esc(i18n[lang].clean)}</button>
-    <button class="chip" data-result-action="timestamped">${esc(i18n[lang].timestamped)}</button>
-    <button class="chip" data-result-action="copy">${esc(i18n[lang].copy)}</button>
-    <button class="chip" data-result-action="copy-ts">${esc(i18n[lang].copyTimestamps)}</button>
-    <button class="chip" data-result-action="prev">${esc(i18n[lang].previous)}</button>
-    <button class="chip" data-result-action="next">${esc(i18n[lang].next)}</button>
+    <button class="chip active" type="button" data-result-action="clean">${esc(i18n[lang].clean)}</button>
+    <button class="chip" type="button" data-result-action="timestamped">${esc(i18n[lang].timestamped)}</button>
+    <button class="chip" type="button" data-result-action="copy">${esc(i18n[lang].copy)}</button>
+    <button class="chip" type="button" data-result-action="copy-ts">${esc(i18n[lang].copyTimestamps)}</button>
+    <button class="chip" type="button" data-result-action="prev">${esc(i18n[lang].previous)}</button>
+    <button class="chip" type="button" data-result-action="next">${esc(i18n[lang].next)}</button>
   </div>
   <input id="search" class="search" placeholder="${esc(i18n[lang].search)}">
   <div id="matchCount" class="muted"></div>
@@ -320,6 +456,7 @@ function searchText(el) {
   const q = el ? el.value.trim() : "";
   const raw = currentRaw();
   if (!t) return;
+
   if (!q) {
     t.textContent = raw;
     searchMatches = [];
@@ -328,7 +465,9 @@ function searchText(el) {
     if (count) count.textContent = "";
     return;
   }
-  const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(escaped, "gi");
   searchMatches = [];
   let m;
   while ((m = re.exec(raw)) !== null) searchMatches.push(m.index);
@@ -347,12 +486,12 @@ function focusMatch(delta) {
 async function copyValue(value, button) {
   await navigator.clipboard.writeText(value || "");
   if (!button) return;
-  const original = button.textContent;
+  const old = button.textContent;
   button.textContent = i18n[lang].copied;
-  setTimeout(() => { button.textContent = original; }, 1200);
+  setTimeout(() => { button.textContent = old; }, 1200);
 }
 
-content.addEventListener("click", async event => {
+document.addEventListener("click", event => {
   const mode = event.target.closest("[data-mode]");
   if (mode) {
     selectMode(mode.dataset.mode);
@@ -360,36 +499,37 @@ content.addEventListener("click", async event => {
   }
 
   if (event.target.closest("#go")) {
-    await submitPlaylist();
-    return;
-  }
-
-  const checkbox = event.target.closest("#list input[type='checkbox']");
-  if (checkbox && playMode === "one" && checkbox.checked) {
-    document.querySelectorAll("#list input").forEach(x => { if (x !== checkbox) x.checked = false; });
+    submitPlaylist();
     return;
   }
 
   const job = event.target.closest("[data-job-id]");
   if (job) {
-    await openGroupJob(job.dataset.jobId);
+    openGroupJob(job.dataset.jobId);
     return;
   }
 
-  const action = event.target.closest("[data-result-action]");
-  if (!action) return;
-  const key = action.dataset.resultAction;
-  if (key === "clean") showTranscript();
-  if (key === "timestamped") showTimestamped();
-  if (key === "copy") await copyValue(rawTranscript, action);
-  if (key === "copy-ts") await copyValue(rawTimestamped, action);
-  if (key === "prev") focusMatch(-1);
-  if (key === "next") focusMatch(1);
+  const actionButton = event.target.closest("[data-result-action]");
+  if (!actionButton) return;
+  const action = actionButton.dataset.resultAction;
+  if (action === "clean") showTranscript();
+  else if (action === "timestamped") showTimestamped();
+  else if (action === "copy") copyValue(rawTranscript, actionButton);
+  else if (action === "copy-ts") copyValue(rawTimestamped, actionButton);
+  else if (action === "prev") focusMatch(-1);
+  else if (action === "next") focusMatch(1);
 });
 
-content.addEventListener("input", event => {
-  if (event.target.id === "search") searchText(event.target);
+document.addEventListener("input", event => {
+  if (event.target?.id === "search") searchText(event.target);
 });
 
-applyUiLanguage("en");
+document.addEventListener("change", event => {
+  if (playMode !== "one" || !event.target.matches("#list input[type='checkbox']") || !event.target.checked) return;
+  document.querySelectorAll("#list input[type='checkbox']").forEach(x => {
+    if (x !== event.target) x.checked = false;
+  });
+});
+
+applyUiLanguage(lang);
 loadLanguages();
