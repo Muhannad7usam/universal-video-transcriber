@@ -21,15 +21,53 @@ LANGUAGE_NAMES = {
 }
 
 
-def _join_segments(segments):
-    return " ".join(s["text"].strip() for s in segments if s.get("text", "").strip())
+def _tidy(text: str) -> str:
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\s+([،,.!?؟:;])", r"\1", text)
+    text = re.sub(r"([.!?؟])(?=\S)", r"\1 ", text)
+    return text.strip()
 
 
 def clean_transcript(segments):
-    text = _join_segments(segments)
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r" *([.!?؟]) +", r"\1\n\n", text)
-    return text.strip()
+    """Build readable paragraphs without dropping any emitted segment text."""
+    paragraphs = []
+    current = []
+    word_count = 0
+
+    def flush():
+        nonlocal current, word_count
+        if current:
+            value = _tidy(" ".join(current))
+            if value:
+                paragraphs.append(value)
+        current = []
+        word_count = 0
+
+    for segment in segments:
+        text = _tidy(segment.get("text", ""))
+        if not text:
+            continue
+
+        speaker_break = bool(re.match(r"^>+\s*", text))
+        text = re.sub(r"^>+\s*", "", text).strip()
+        if not text:
+            continue
+
+        if speaker_break and current:
+            flush()
+
+        current.append(text)
+        word_count += len(text.split())
+
+        # Prefer natural sentence ends, but also prevent one giant paragraph
+        # when auto-captions contain little or no punctuation.
+        if word_count >= 24 and re.search(r"[.!?؟]$", text):
+            flush()
+        elif word_count >= 60:
+            flush()
+
+    flush()
+    return "\n\n".join(paragraphs).strip()
 
 
 def timestamped_transcript(segments):
@@ -38,7 +76,7 @@ def timestamped_transcript(segments):
         return f"{x // 3600:02d}:{(x % 3600) // 60:02d}:{x % 60:02d}"
 
     return "\n\n".join(
-        f"{ts(s['start'])} – {ts(s['end'])}\n{s['text'].strip()}"
+        f"{ts(s['start'])} – {ts(s['end'])}\n{_tidy(s['text'])}"
         for s in segments
         if s.get("text", "").strip()
     )
@@ -49,4 +87,7 @@ def language_label(code: str) -> str:
 
 
 def format_caption_text(text: str):
-    return "\n\n".join(p.strip() for p in re.split(r"(?<=[.!?؟])\s+", text) if p.strip())
+    text = _tidy(text)
+    return "\n\n".join(
+        p.strip() for p in re.split(r"(?<=[.!?؟])\s+", text) if p.strip()
+    )
