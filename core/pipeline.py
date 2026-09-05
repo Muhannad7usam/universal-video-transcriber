@@ -17,6 +17,20 @@ from core.output.store import save_result
 from core.security.filenames import inside
 
 
+def duration_tier(duration: float | int | None) -> str:
+    """Human-facing duration class used only to describe processing strategy."""
+    if duration is None:
+        return "unknown"
+    seconds = max(0.0, float(duration))
+    if seconds < 15 * 60:
+        return "short"
+    if seconds < 60 * 60:
+        return "medium"
+    if seconds < 4 * 60 * 60:
+        return "long"
+    return "extremely_long"
+
+
 def _base_language(value: str | None) -> str | None:
     if not value:
         return None
@@ -38,9 +52,6 @@ def _caption_output_looks_usable(segments, clean: str, duration: float | None) -
         if len(words) / max(minutes, 1) < 4:
             return False
 
-    # A rolling-caption parser bug or bad source sometimes leaves mostly exact
-    # repeated segments. The normalizer removes overlap, but this is a final
-    # guard before trusting captions as the complete answer.
     texts = [s.get("text", "").strip() for s in segments if s.get("text", "").strip()]
     if len(texts) >= 8:
         unique_ratio = len(set(texts)) / len(texts)
@@ -84,8 +95,16 @@ def run_job(
         info = extract_info(url, flat=False)
         title = info.get("title") or "Untitled video"
         duration = info.get("duration")
+        tier = duration_tier(duration)
 
-        if duration and duration > settings.max_video_duration_seconds:
+        # Zero means unlimited. A deployment can still opt into an explicit cap
+        # without changing code, but the default product supports extremely long
+        # videos and lets the chunked transcription engine bound memory use.
+        if (
+            duration
+            and settings.max_video_duration_seconds > 0
+            and duration > settings.max_video_duration_seconds
+        ):
             raise ValueError("Video exceeds the configured duration limit.")
 
         platform = platform_name(info)
@@ -97,6 +116,7 @@ def run_job(
         model = None
         device = None
         confidence = None
+        chunked = False
 
         progress(12, "checking_captions")
         cap = find_usable_caption(info, requested_language)
@@ -156,6 +176,10 @@ def run_job(
             model = result.get("model")
             device = result.get("device")
             confidence = result.get("confidence")
+            chunked = bool(result.get("chunked"))
+            if not duration and result.get("duration"):
+                duration = result["duration"]
+                tier = duration_tier(duration)
 
             progress(86, "formatting")
             clean = clean_transcript(segments)
@@ -183,6 +207,9 @@ def run_job(
             device=device,
             confidence=confidence,
             processing_seconds=processing_seconds,
+            duration_seconds=duration,
+            duration_tier=tier,
+            chunked=chunked,
             segments=segments,
             clean=clean,
             timestamped=timestamped,
