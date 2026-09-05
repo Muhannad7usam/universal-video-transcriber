@@ -67,15 +67,42 @@ def test_repeated_blocks_inside_one_caption_are_collapsed():
 
 def test_preferred_caption_language():
     info = {
+        "language": "ar",
         "subtitles": {
             "en": [{"ext": "vtt"}],
-            "ar": [{"ext": "vtt"}],
-        }
+            "ar": [{"ext": "json3"}],
+        },
     }
     cap = find_usable_caption(info, "ar")
     assert cap is not None
-    assert cap[1] == "ar"
+    assert cap["language"] == "ar"
+    assert cap["ext"] == "json3"
     assert find_usable_caption(info, "fr") is None
+
+
+def test_auto_detect_never_picks_random_translated_caption():
+    info = {
+        "language": "ar",
+        "automatic_captions": {
+            "ab": [{"ext": "vtt"}],
+            "en": [{"ext": "vtt"}],
+            "ar": [{"ext": "json3"}],
+        },
+    }
+    cap = find_usable_caption(info, None)
+    assert cap is not None
+    assert cap["language"] == "ar"
+
+
+def test_selected_language_does_not_use_translated_auto_caption():
+    info = {
+        "language": "en",
+        "automatic_captions": {
+            "en": [{"ext": "json3"}],
+            "ar": [{"ext": "vtt"}],
+        },
+    }
+    assert find_usable_caption(info, "ar") is None
 
 
 def test_transcript_formatting():
