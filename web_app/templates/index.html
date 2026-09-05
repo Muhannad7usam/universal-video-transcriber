@@ -1,1 +1,43 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Universal Video Transcriber</title><link rel="stylesheet" href="/static/app.css"></head><body><main class="shell"><header><div class="brand"><span class="logo">UT</span><span>Universal Video Transcriber</span></div><div class="lang"><button data-lang="en">EN</button><button data-lang="ar">عربي</button></div></header><section class="hero"><div class="eyebrow">LOCAL-FIRST TRANSCRIPTION</div><h1 data-i18n="headline">Turn videos into clean transcripts.</h1><p data-i18n="sub">Paste a video or playlist link. We handle the rest automatically.</p><div class="input-row"><input id="url" type="url" placeholder="Paste a video or playlist link…" autocomplete="off"><button id="start" class="primary" data-i18n="start">Start Transcription</button></div><p class="privacy" data-i18n="privacy">Generated transcripts are retained for up to 10 days and then deleted automatically.</p></section><section id="content"></section></main><script src="/static/app.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Universal Video Transcriber</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div class="brand"><span class="logo">UT</span><span>Universal Video Transcriber</span></div>
+      <div class="lang"><button data-lang="en">EN</button><button data-lang="ar">عربي</button></div>
+    </header>
+
+    <section class="hero">
+      <div class="eyebrow">LOCAL-FIRST TRANSCRIPTION</div>
+      <h1 data-i18n="headline">Turn videos into clean transcripts.</h1>
+      <p data-i18n="sub">Paste a video or playlist link. We handle the rest automatically.</p>
+
+      <div class="input-row">
+        <input id="url" type="url" placeholder="Paste a video or playlist link…" autocomplete="off">
+        <button id="start" class="primary" data-i18n="start">Start Transcription</button>
+      </div>
+
+      <div class="language-row">
+        <label for="transcription-language" data-i18n="transcriptionLanguage">Transcription Language</label>
+        <select id="transcription-language" aria-label="Transcription Language">
+          <option value="auto">Auto Detect</option>
+          <option value="ar">Arabic — العربية</option>
+          <option value="en">English</option>
+        </select>
+        <span class="language-help" data-i18n="languageHelp">Choose the spoken language for better accuracy, or keep Auto Detect.</span>
+      </div>
+
+      <p class="privacy" data-i18n="privacy">Generated transcripts are retained for up to 10 days and then deleted automatically.</p>
+    </section>
+
+    <section id="content"></section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
