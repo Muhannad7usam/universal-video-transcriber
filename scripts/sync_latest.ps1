@@ -13,6 +13,7 @@ $files = @(
     "core/downloader/metadata.py",
     "core/output/store.py",
     "core/pipeline.py",
+    "core/security/filenames.py",
     "core/subtitles/engine.py",
     "core/subtitles/normalize.py",
     "core/transcription/whisper_engine.py",
