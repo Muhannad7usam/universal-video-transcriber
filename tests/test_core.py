@@ -22,7 +22,8 @@ def test_playlist_selection():
     assert select_indices(4,all_items=True)==[1,2,3,4]
 
 def test_subtitles_utf8():
-    assert parse_vtt_srt('WEBVTT\n\n00:00.000 --> 00:01.000\nالنهاردة hello\n\n00:01.000 --> 00:02.000\nالنهاردة hello') == 'النهاردة hello النهاردة hello'
+    text='WEBVTT\n\n00:00.000 --> 00:01.000\nالنهاردة hello\n\n00:01.000 --> 00:02.000\nالنهاردة hello'
+    assert parse_vtt_srt(text) == 'النهاردة hello النهاردة hello'
     assert parse_json3('{"events":[{"tStartMs":0,"dDurationMs":1000,"segs":[{"utf8":"Hello"}]}]}') == 'Hello'
 
 def test_transcript_formatting():
