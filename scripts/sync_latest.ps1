@@ -10,6 +10,7 @@ $files = @(
     "core/cache.py",
     "core/config.py",
     "core/downloader/audio.py",
+    "core/downloader/metadata.py",
     "core/output/store.py",
     "core/pipeline.py",
     "core/subtitles/engine.py",
