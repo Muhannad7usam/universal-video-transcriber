@@ -19,12 +19,13 @@ from core.jobs import JobStore
 from core.pipeline import run_job
 from core.security.filenames import inside
 from core.security.urls import validate_media_url
+from core.transcription.whisper_engine import runtime_info
 from scripts.cleanup import cleanup
 
 store = JobStore(settings.jobs_dir / "jobs.db")
 executor = ThreadPoolExecutor(max_workers=settings.max_concurrent_jobs)
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
-app = FastAPI(title="Universal Video Transcriber", version="1.1.0")
+app = FastAPI(title="Universal Video Transcriber", version="1.2.0")
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 _rate = {}
 _RATE_WINDOW = 600
@@ -81,6 +82,7 @@ async def security_headers(request: Request, call_next):
     length = request.headers.get("content-length")
     if length and length.isdigit() and int(length) > 65536:
         return JSONResponse({"detail": "Request body too large."}, status_code=413)
+
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -89,6 +91,12 @@ async def security_headers(request: Request, call_next):
         "default-src 'self'; img-src 'self' https: data:; style-src 'self'; "
         "script-src 'self'; connect-src 'self'"
     )
+
+    if request.url.path.startswith("/api/") or request.url.path in {"/health", "/ready"}:
+        response.headers["Cache-Control"] = "no-store"
+    elif request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "public, max-age=300"
+
     return response
 
 
@@ -129,11 +137,13 @@ async def health():
         w = True
     except Exception:
         w = False
+
     return {
         "status": "ok",
         "ffmpeg": shutil.which("ffmpeg") is not None,
         "yt_dlp": y,
         "transcription_engine": w,
+        "runtime": runtime_info(),
     }
 
 
@@ -233,23 +243,39 @@ async def result(job_id: str):
     j = store.get(job_id)
     if not j or j["state"] != "completed":
         raise HTTPException(404, "Result not found")
+
     d = Path(j["result_dir"]).resolve()
     if not inside(settings.results_dir, d):
         raise HTTPException(403, "Invalid result path")
-    p = d / "transcript.txt"
-    if not p.is_file():
+
+    transcript_path = d / "transcript.txt"
+    if not transcript_path.is_file():
         raise HTTPException(404, "Transcript not found")
+
+    metadata = {}
+    metadata_path = d / "metadata.json"
+    if metadata_path.is_file():
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            metadata = {}
+
     return {
         "title": j["title"],
         "language": j["language"],
         "method": j["method"],
         "url": j["url"],
-        "transcript": p.read_text(encoding="utf-8"),
+        "transcript": transcript_path.read_text(encoding="utf-8"),
         "timestamped": (
             (d / "transcript_timestamped.txt").read_text(encoding="utf-8")
             if (d / "transcript_timestamped.txt").exists()
             else ""
         ),
+        "model": metadata.get("model"),
+        "device": metadata.get("device"),
+        "confidence": metadata.get("confidence"),
+        "processing_seconds": metadata.get("processing_seconds"),
+        "cache_hit": bool(metadata.get("cache_hit")),
     }
 
 
@@ -272,7 +298,30 @@ async def events(job_id: str, request: Request):
                 last = payload
             if j["state"] in {"completed", "failed"}:
                 break
-            await asyncio.sleep(0.7)
+            await asyncio.sleep(0.35)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/groups/{group_id}/events")
+async def group_events(group_id: str, request: Request):
+    async def gen():
+        last = None
+        while True:
+            if await request.is_disconnected():
+                break
+            jobs = store.group(group_id)
+            payload = json.dumps({"group_id": group_id, "jobs": jobs}, ensure_ascii=False)
+            if payload != last:
+                yield f"data: {payload}\n\n"
+                last = payload
+            if jobs and all(j["state"] in {"completed", "failed"} for j in jobs):
+                break
+            await asyncio.sleep(0.5)
 
     return StreamingResponse(
         gen(),
