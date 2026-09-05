@@ -6,6 +6,7 @@ from core.playlist.selection import select_indices
 from core.subtitles.normalize import parse_vtt_srt, parse_vtt_srt_segments, parse_json3
 from core.subtitles.engine import find_usable_caption
 from core.formatting.transcript import clean_transcript, timestamped_transcript, language_label
+from core.pipeline import duration_tier
 
 
 def test_url_security():
@@ -30,6 +31,15 @@ def test_playlist_selection():
     assert select_indices(10, range_=(2, 4)) == [2, 3, 4]
     assert select_indices(10, first=3) == [1, 2, 3]
     assert select_indices(4, all_items=True) == [1, 2, 3, 4]
+
+
+def test_duration_tiers_cover_short_to_extremely_long():
+    assert duration_tier(60) == "short"
+    assert duration_tier(15 * 60) == "medium"
+    assert duration_tier(60 * 60) == "long"
+    assert duration_tier(4 * 60 * 60) == "extremely_long"
+    assert duration_tier(24 * 60 * 60) == "extremely_long"
+    assert duration_tier(None) == "unknown"
 
 
 def test_subtitles_utf8():
