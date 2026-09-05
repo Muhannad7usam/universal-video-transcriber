@@ -27,6 +27,9 @@ def save_result(
     device=None,
     confidence=None,
     processing_seconds=None,
+    duration_seconds=None,
+    duration_tier=None,
+    chunked=False,
 ):
     d = result_dir(title, job_id)
     (d / "transcript.txt").write_text(clean, encoding="utf-8")
@@ -43,6 +46,9 @@ def save_result(
         "device": device,
         "confidence": confidence,
         "processing_seconds": processing_seconds,
+        "duration_seconds": duration_seconds,
+        "duration_tier": duration_tier,
+        "chunked": bool(chunked),
         "job_id": job_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
