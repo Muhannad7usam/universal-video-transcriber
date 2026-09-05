@@ -9,41 +9,88 @@ def _normalize_lang(value: str | None) -> str | None:
     return value.lower().replace("_", "-").split("-")[0]
 
 
-def find_usable_caption(info: dict, preferred_language: str | None = None):
+def _pick_entry(entries):
+    if not entries:
+        return None
+    preferred_exts = ("json3", "vtt", "srt", "ttml")
+    for ext in preferred_exts:
+        for entry in entries:
+            if entry.get("ext") == ext:
+                return entry
+    return entries[0]
+
+
+def _track_candidates(info: dict, key: str, preferred_language: str | None):
+    tracks = info.get(key) or {}
+    if not tracks:
+        return []
+
     preferred = _normalize_lang(preferred_language)
+    source_language = _normalize_lang(info.get("language"))
 
+    if preferred:
+        # If the extractor knows the video's spoken language and it conflicts
+        # with the user's selected language, do not silently use a translated
+        # automatic-caption track. The user selected a spoken language, not a
+        # translation target.
+        if key == "automatic_captions" and source_language and source_language != preferred:
+            return []
+        return [
+            (lang, entries)
+            for lang, entries in tracks.items()
+            if _normalize_lang(lang) == preferred
+        ]
+
+    # Auto Detect should never pick an arbitrary alphabetically-first translated
+    # YouTube caption (for example "ab"). Prefer the extractor's original
+    # language, then explicitly original tracks, then a sole manual subtitle.
+    if source_language:
+        exact = [
+            (lang, entries)
+            for lang, entries in tracks.items()
+            if _normalize_lang(lang) == source_language
+        ]
+        if exact:
+            return exact
+
+    originals = [
+        (lang, entries)
+        for lang, entries in tracks.items()
+        if str(lang).lower().endswith("-orig")
+    ]
+    if originals:
+        return originals
+
+    if key == "subtitles" and len(tracks) == 1:
+        return list(tracks.items())
+
+    return []
+
+
+def find_usable_caption(info: dict, preferred_language: str | None = None):
     for key in ("subtitles", "automatic_captions"):
-        tracks = info.get(key) or {}
-        if not tracks:
-            continue
-
-        ordered = list(tracks.items())
-        if preferred:
-            ordered.sort(key=lambda pair: 0 if _normalize_lang(pair[0]) == preferred else 1)
-
-        for lang, entries in ordered:
-            if preferred and _normalize_lang(lang) != preferred:
-                continue
-            if not entries:
-                continue
-            for entry in entries:
-                if entry.get("ext") in {"vtt", "srt", "ttml", "json3"}:
-                    return key, lang, entry.get("ext")
-            return key, lang, entries[0].get("ext", "vtt")
-
+        for lang, entries in _track_candidates(info, key, preferred_language):
+            entry = _pick_entry(entries)
+            if entry:
+                return {
+                    "kind": key,
+                    "language": lang,
+                    "ext": entry.get("ext", "vtt"),
+                }
     return None
 
 
-def download_caption(url: str, out_dir: Path, language: str | None = None):
+def download_caption(url: str, out_dir: Path, language: str):
     out_dir.mkdir(parents=True, exist_ok=True)
-    langs = [language] if language else ["all"]
     opts = ydl_base() | {
         "noplaylist": True,
         "skip_download": True,
         "writesubtitles": True,
         "writeautomaticsub": True,
-        "subtitleslangs": langs,
-        "subtitlesformat": "vtt",
+        "subtitleslangs": [language],
+        # json3 is usually cleaner for YouTube rolling captions; fall back to
+        # VTT/other formats transparently on sites that do not expose json3.
+        "subtitlesformat": "json3/vtt/srt/ttml/best",
         "outtmpl": str(out_dir / "caption.%(ext)s"),
     }
 
