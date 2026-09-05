@@ -147,6 +147,11 @@ def _run(
         "compression_ratio_threshold": 2.4,
         "log_prob_threshold": -1.0,
         "no_speech_threshold": 0.6,
+        # With Auto Detect, detect language per segment. This improves genuine
+        # Arabic/English code-switching while condition_on_previous_text=False
+        # prevents one segment's language context from contaminating the next.
+        "multilingual": language is None,
+        "language_detection_segments": 3 if language is None else 1,
     }
 
     if vad_filter:
