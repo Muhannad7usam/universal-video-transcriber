@@ -74,7 +74,7 @@ def main(argv=None):
     try:
         language = _language(args.language)
         url = validate_media_url(args.url)
-        info = extract_info(url, flat=True)
+        info = extract_info(url, flat=True, playlist_end=1)
         store = JobStore(settings.jobs_dir / "jobs.db")
 
         if not is_playlist(info):
