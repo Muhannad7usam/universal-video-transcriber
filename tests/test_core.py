@@ -3,7 +3,7 @@ from pathlib import Path
 from core.security.urls import validate_media_url
 from core.security.filenames import safe_filename, inside
 from core.playlist.selection import select_indices
-from core.subtitles.normalize import parse_vtt_srt, parse_json3
+from core.subtitles.normalize import parse_vtt_srt, parse_vtt_srt_segments, parse_json3
 from core.subtitles.engine import find_usable_caption
 from core.formatting.transcript import clean_transcript, timestamped_transcript, language_label
 
@@ -38,6 +38,33 @@ def test_subtitles_utf8():
     assert parse_json3('{"events":[{"tStartMs":0,"dDurationMs":1000,"segs":[{"utf8":"Hello"}]}]}') == "Hello"
 
 
+def test_rolling_captions_are_deoverlapped():
+    text = (
+        "WEBVTT\n\n"
+        "00:00.000 --> 00:01.000\nانا مستعجل عايز اطمن على الوحده\n\n"
+        "00:01.000 --> 00:02.000\nانا مستعجل عايز اطمن على الوحده بتاعتي\n\n"
+        "00:02.000 --> 00:03.000\nانا مستعجل عايز اطمن على الوحده بتاعتي\n\n"
+        "00:03.000 --> 00:04.000\nهو البي ظابط ولا ايه\n"
+    )
+    segments = parse_vtt_srt_segments(text)
+    assert [s["text"] for s in segments] == [
+        "انا مستعجل عايز اطمن على الوحده",
+        "بتاعتي",
+        "هو البي ظابط ولا ايه",
+    ]
+    joined = " ".join(s["text"] for s in segments)
+    assert joined.count("انا مستعجل") == 1
+
+
+def test_repeated_blocks_inside_one_caption_are_collapsed():
+    text = (
+        "WEBVTT\n\n"
+        "00:00.000 --> 00:03.000\n"
+        "عايزين حقنا دلوقتي عايزين حقنا دلوقتي عايزين حقنا دلوقتي\n"
+    )
+    assert parse_vtt_srt(text) == "عايزين حقنا دلوقتي"
+
+
 def test_preferred_caption_language():
     info = {
         "subtitles": {
@@ -52,8 +79,14 @@ def test_preferred_caption_language():
 
 
 def test_transcript_formatting():
-    seg = [{"start": 0, "end": 1, "text": "Hello."}, {"start": 2, "end": 4, "text": "أهلا"}]
-    assert "Hello." in clean_transcript(seg)
+    seg = [
+        {"start": 0, "end": 1, "text": "Hello."},
+        {"start": 2, "end": 4, "text": ">> أهلا"},
+    ]
+    clean = clean_transcript(seg)
+    assert "Hello." in clean
+    assert "أهلا" in clean
+    assert ">>" not in clean
     assert "00:00:00" in timestamped_transcript(seg)
     assert language_label("ar") == "Arabic"
     assert language_label("tr") == "Turkish"
