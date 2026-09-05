@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 import math
+import re
 import shutil
 
 from core.config import settings
@@ -71,6 +72,56 @@ def runtime_info():
     return {"model": model_name, "device": device, "compute_type": compute}
 
 
+def _norm_token(token: str) -> str:
+    return re.sub(r"[^\w]+", "", token, flags=re.UNICODE).casefold()
+
+
+def _collapse_excessive_repetition(text: str) -> str:
+    """Collapse only extreme immediate loops that are typical Whisper hallucinations.
+
+    Natural emphasis is preserved: single-word repetition is allowed up to three
+    times, while multi-word phrases are allowed twice. We only collapse when a
+    phrase repeats far beyond that threshold.
+    """
+    tokens = text.split()
+    if len(tokens) < 5:
+        return text
+
+    out = []
+    i = 0
+    while i < len(tokens):
+        matched = False
+        max_size = min(12, (len(tokens) - i) // 3)
+        for size in range(max_size, 0, -1):
+            base = [_norm_token(x) for x in tokens[i : i + size]]
+            if not base or not all(base):
+                continue
+
+            count = 1
+            pos = i + size
+            while pos + size <= len(tokens):
+                candidate = [_norm_token(x) for x in tokens[pos : pos + size]]
+                if candidate != base:
+                    break
+                count += 1
+                pos += size
+
+            threshold = 5 if size == 1 else 3
+            if count >= threshold:
+                keep = 3 if size == 1 else 2
+                for _ in range(keep):
+                    out.extend(tokens[i : i + size])
+                i = pos
+                matched = True
+                break
+
+        if not matched:
+            out.append(tokens[i])
+            i += 1
+
+    return " ".join(out)
+
+
 def _run(
     path: Path,
     language: str | None,
@@ -79,7 +130,7 @@ def _run(
     progress_callback=None,
 ):
     model, runtime = _model()
-    model_name, device, _ = runtime
+    _, device, _ = runtime
 
     beam_size = max(1, int(settings.whisper_beam_size))
     # CPU inference benefits dramatically from a modest beam; GPU can afford
@@ -116,7 +167,7 @@ def _run(
     probabilities = []
 
     for segment in segments_iter:
-        text = (segment.text or "").strip()
+        text = _collapse_excessive_repetition((segment.text or "").strip())
         if not text:
             continue
 
