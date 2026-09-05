@@ -169,7 +169,9 @@ async def analyze(payload: LinkIn, request: Request):
     language = _normalize_language(payload.language)
     try:
         url = validate_media_url(payload.url)
-        info = extract_info(url, flat=True)
+        # One-entry flat probe is enough to distinguish a video from a playlist
+        # and avoids enumerating a huge playlist twice before the selector opens.
+        info = extract_info(url, flat=True, playlist_end=1)
     except Exception as e:
         raise HTTPException(400, str(e)) from e
 
