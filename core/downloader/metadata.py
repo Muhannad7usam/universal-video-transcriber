@@ -15,12 +15,21 @@ def ydl_base():
         "fragment_retries": 2,
         "concurrent_fragment_downloads": 4,
         "nocheckcertificate": False,
-        # Cloud/datacenter IPs are frequently challenged by YouTube. Use the
-        # mweb client and explicitly point yt-dlp's PO-token plugin at the
-        # BgUtils HTTP provider running inside this same container.
+        "source_address": "0.0.0.0",
+        # On cloud/datacenter IPs the normal youtube.com webpage can be the
+        # request that triggers "Sign in to confirm you're not a bot" before
+        # PO-token-backed player requests are even attempted. Skip that page
+        # and ask several current Innertube clients so one blocked client does
+        # not end the extraction. mweb remains first so the BgUtils provider
+        # can supply its GVS PO token automatically.
         "extractor_args": {
             "youtube": {
-                "player_client": ["mweb"],
+                "player_client": ["mweb", "android_vr", "web_embedded", "tv"],
+                "player_skip": ["webpage", "configs"],
+                "pot_trace": ["true"],
+            },
+            "youtubetab": {
+                "skip": ["webpage"],
             },
             "youtubepot-bgutilhttp": {
                 "base_url": ["http://127.0.0.1:4416"],
