@@ -11,7 +11,6 @@ if (-not (Test-Path $python)) {
     throw "Virtual environment not found at $python"
 }
 
-# FFmpeg discovery.
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     $ffmpegRoot = Join-Path $env:USERPROFILE "Downloads\ffmpeg"
     if (Test-Path $ffmpegRoot) {
@@ -24,8 +23,10 @@ if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     throw "FFmpeg was not found."
 }
+if (-not (Get-Command ffprobe -ErrorAction SilentlyContinue)) {
+    throw "ffprobe was not found."
+}
 
-# Runtime defaults.
 $env:APP_ENV = "production"
 $env:HOST = "0.0.0.0"
 $env:PORT = "$Port"
@@ -53,15 +54,14 @@ $urlFile = Join-Path $runDir "public_url.txt"
 
 Remove-Item $serverOut,$serverErr,$cloudOut,$cloudErr,$urlFile -Force -ErrorAction SilentlyContinue
 
-# Refuse to stack a second background instance if the previous one is alive.
 if (Test-Path $pidFile) {
     try {
         $old = Get-Content $pidFile -Raw | ConvertFrom-Json
         $alive = @()
-        foreach ($pid in @($old.uvicorn_pid, $old.cloudflared_pid)) {
-            if ($pid) {
-                $p = Get-Process -Id $pid -ErrorAction SilentlyContinue
-                if ($p) { $alive += $pid }
+        foreach ($processId in @($old.uvicorn_pid, $old.cloudflared_pid)) {
+            if ($processId) {
+                $p = Get-Process -Id $processId -ErrorAction SilentlyContinue
+                if ($p) { $alive += $processId }
             }
         }
         if ($alive.Count -gt 0) {
@@ -72,20 +72,23 @@ if (Test-Path $pidFile) {
     }
 }
 
-$server = Start-Process \
-    -FilePath $python \
-    -ArgumentList @(
-        "-m", "uvicorn", "web_app.main:app",
-        "--host", "0.0.0.0",
-        "--port", "$Port",
-        "--proxy-headers",
-        "--forwarded-allow-ips", "127.0.0.1"
-    ) \
-    -WorkingDirectory $root \
-    -WindowStyle Hidden \
-    -RedirectStandardOutput $serverOut \
-    -RedirectStandardError $serverErr \
-    -PassThru
+$serverArgs = @(
+    "-m", "uvicorn", "web_app.main:app",
+    "--host", "0.0.0.0",
+    "--port", "$Port",
+    "--proxy-headers",
+    "--forwarded-allow-ips", "127.0.0.1"
+)
+$serverStart = @{
+    FilePath = $python
+    ArgumentList = $serverArgs
+    WorkingDirectory = $root
+    WindowStyle = "Hidden"
+    RedirectStandardOutput = $serverOut
+    RedirectStandardError = $serverErr
+    PassThru = $true
+}
+$server = Start-Process @serverStart
 
 $ready = $false
 for ($i = 0; $i -lt 40; $i++) {
@@ -117,20 +120,20 @@ if (-not $cloudflared) {
     $toolDir = Join-Path $root ".tools"
     New-Item -ItemType Directory -Force -Path $toolDir | Out-Null
     $cloudflared = Join-Path $toolDir "cloudflared.exe"
-    Invoke-WebRequest \
-        -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" \
-        -OutFile $cloudflared \
-        -UseBasicParsing
+    Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile $cloudflared -UseBasicParsing
 }
 
-$cloud = Start-Process \
-    -FilePath $cloudflared \
-    -ArgumentList @("tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:$Port") \
-    -WorkingDirectory $root \
-    -WindowStyle Hidden \
-    -RedirectStandardOutput $cloudOut \
-    -RedirectStandardError $cloudErr \
-    -PassThru
+$cloudArgs = @("tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:$Port")
+$cloudStart = @{
+    FilePath = $cloudflared
+    ArgumentList = $cloudArgs
+    WorkingDirectory = $root
+    WindowStyle = "Hidden"
+    RedirectStandardOutput = $cloudOut
+    RedirectStandardError = $cloudErr
+    PassThru = $true
+}
+$cloud = Start-Process @cloudStart
 
 $url = $null
 for ($i = 0; $i -lt 60; $i++) {
