@@ -10,7 +10,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MAX_CONCURRENT_JOBS=1
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+    && apt-get install -y --no-install-recommends ffmpeg ca-certificates git nodejs npm \
+    && git clone --depth 1 --branch 1.3.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /root/bgutil-ytdlp-pot-provider \
+    && cd /root/bgutil-ytdlp-pot-provider/server \
+    && npm ci \
+    && npx tsc \
+    && npm prune --omit=dev \
+    && npm cache clean --force \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
