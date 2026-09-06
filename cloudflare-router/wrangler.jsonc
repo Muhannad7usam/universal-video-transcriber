@@ -1,0 +1,9 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "universal-transcriber-router",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-06",
+  "vars": {
+    "ALLOWED_ORIGIN": "https://clinquant-ganache-c42c5f.netlify.app"
+  }
+}
