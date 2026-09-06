@@ -1,0 +1,17 @@
+.git
+.github
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+data/temp
+data/results
+data/cache
+data/jobs
+*.zip
+*.mp3
+*.mp4
+*.m4a
+*.webm
+*.wav
+*.flac
