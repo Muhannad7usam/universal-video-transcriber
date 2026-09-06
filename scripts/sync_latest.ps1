@@ -18,6 +18,8 @@ $files = @(
     "core/subtitles/normalize.py",
     "core/transcription/whisper_engine.py",
     "scripts/cleanup.py",
+    "scripts/start_network_public.ps1",
+    "scripts/enable_lan_firewall.ps1",
     "web_app/main.py",
     "web_app/static/app.js",
     "web_app/templates/index.html",
