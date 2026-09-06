@@ -14,7 +14,7 @@
     </header>
 
     <section class="hero">
-      <div class="eyebrow">LOCAL-FIRST TRANSCRIPTION</div>
+      <div class="eyebrow">CLOUD-ROUTED TRANSCRIPTION</div>
       <h1 data-i18n="headline">Turn videos into clean transcripts.</h1>
       <p data-i18n="sub">Paste a video or playlist link. We handle the rest automatically.</p>
 
@@ -38,6 +38,36 @@
 
     <section id="content"></section>
   </main>
+  <script>
+    (() => {
+      const API_BASE = "https://universal-video-transcriber.m-7usam06.workers.dev";
+      const route = value => {
+        if (typeof value !== "string") return value;
+        return value.startsWith("/api/") || value === "/ready" ? API_BASE + value : value;
+      };
+
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        if (typeof input === "string") return nativeFetch(route(input), init);
+        if (input instanceof Request) {
+          const url = new URL(input.url, window.location.origin);
+          if (url.origin === window.location.origin && (url.pathname.startsWith("/api/") || url.pathname === "/ready")) {
+            input = new Request(API_BASE + url.pathname + url.search, input);
+          }
+        }
+        return nativeFetch(input, init);
+      };
+
+      const NativeEventSource = window.EventSource;
+      if (NativeEventSource) {
+        window.EventSource = class extends NativeEventSource {
+          constructor(url, options) {
+            super(route(url), options);
+          }
+        };
+      }
+    })();
+  </script>
   <script src="/static/app.js"></script>
 </body>
 </html>
