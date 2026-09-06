@@ -20,13 +20,13 @@ from core.jobs import JobStore
 from core.pipeline import run_job
 from core.security.filenames import inside
 from core.security.urls import validate_media_url
-from core.transcription.whisper_engine import runtime_info
+from core.transcription.engine import runtime_info
 from scripts.cleanup import cleanup
 
 store = JobStore(settings.jobs_dir / "jobs.db")
 executor = ThreadPoolExecutor(max_workers=settings.max_concurrent_jobs)
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
-app = FastAPI(title="Universal Video Transcriber", version="1.3.0")
+app = FastAPI(title="Universal Video Transcriber", version="1.4.0-cloud")
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 _rate = {}
 _RATE_WINDOW = 600
@@ -65,12 +65,6 @@ def _valid_ip(value: str | None) -> str | None:
 
 
 def _client_key(request: Request) -> str:
-    """Return a stable per-client key without trusting arbitrary proxy headers.
-
-    cloudflared connects to Uvicorn from loopback. Only in that case do we trust
-    Cloudflare's CF-Connecting-IP header; direct LAN clients are keyed by their
-    actual socket address and cannot spoof their rate-limit identity.
-    """
     peer = request.client.host if request.client else None
     peer_ip = _valid_ip(peer)
     if peer_ip:
@@ -174,18 +168,33 @@ async def health():
         y = True
     except Exception:
         y = False
-    try:
-        import faster_whisper
-        w = True
-    except Exception:
-        w = False
+
+    provider = (settings.transcription_provider or "local").strip().lower()
+    if provider == "cloudflare":
+        try:
+            import requests  # noqa: F401
+            dependency_ok = True
+        except Exception:
+            dependency_ok = False
+        engine_ok = bool(
+            dependency_ok
+            and settings.cloudflare_account_id
+            and settings.cloudflare_api_token
+        )
+    else:
+        try:
+            import faster_whisper  # noqa: F401
+            engine_ok = True
+        except Exception:
+            engine_ok = False
 
     return {
         "status": "ok",
         "ffmpeg": shutil.which("ffmpeg") is not None,
         "ffprobe": shutil.which("ffprobe") is not None,
         "yt_dlp": y,
-        "transcription_engine": w,
+        "transcription_engine": engine_ok,
+        "transcription_provider": provider,
         "runtime": runtime_info(),
         "network": {
             "bind_host": settings.host,
@@ -193,9 +202,14 @@ async def health():
         },
         "long_form": {
             "duration_limit_seconds": settings.max_video_duration_seconds,
-            "chunk_threshold_seconds": settings.long_video_chunk_threshold_seconds,
-            "chunk_seconds": settings.long_video_chunk_seconds,
-            "chunk_overlap_seconds": settings.long_video_chunk_overlap_seconds,
+            "local_chunk_threshold_seconds": settings.long_video_chunk_threshold_seconds,
+            "local_chunk_seconds": settings.long_video_chunk_seconds,
+            "cloud_chunk_seconds": settings.cloud_chunk_seconds,
+            "chunk_overlap_seconds": (
+                settings.cloud_chunk_overlap_seconds
+                if provider == "cloudflare"
+                else settings.long_video_chunk_overlap_seconds
+            ),
         },
     }
 
@@ -223,8 +237,6 @@ async def analyze(payload: LinkIn, request: Request):
     language = _normalize_language(payload.language)
     try:
         url = validate_media_url(payload.url)
-        # One-entry flat probe is enough to distinguish a video from a playlist
-        # and avoids enumerating a huge playlist twice before the selector opens.
         info = extract_info(url, flat=True, playlist_end=1)
     except Exception as e:
         raise HTTPException(400, str(e)) from e
@@ -340,9 +352,6 @@ async def events(job_id: str, request: Request):
     if not store.get(job_id):
         raise HTTPException(404, "Job not found")
 
-    # TryCloudflare Quick Tunnels buffer SSE and officially do not support it.
-    # Return one event and close there; the existing browser EventSource error
-    # handler then switches to JSON polling. Named tunnels and LAN keep real SSE.
     if _is_quick_tunnel(request):
         async def one_shot():
             j = store.get(job_id)
