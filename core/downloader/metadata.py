@@ -15,12 +15,15 @@ def ydl_base():
         "fragment_retries": 2,
         "concurrent_fragment_downloads": 4,
         "nocheckcertificate": False,
-        # Cloud/datacenter IPs are increasingly challenged by YouTube. The
-        # cloud image installs a yt-dlp PO-token provider; mweb is the client
-        # recommended by yt-dlp for automatic GVS PO-token use.
+        # Cloud/datacenter IPs are frequently challenged by YouTube. Use the
+        # mweb client and explicitly point yt-dlp's PO-token plugin at the
+        # BgUtils HTTP provider running inside this same container.
         "extractor_args": {
             "youtube": {
                 "player_client": ["mweb"],
+            },
+            "youtubepot-bgutilhttp": {
+                "base_url": ["http://127.0.0.1:4416"],
             },
         },
     }
