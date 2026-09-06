@@ -62,6 +62,8 @@ The system transcribes spoken content; it does not intentionally translate it.
 
 Single jobs and playlist groups use Server-Sent Events (SSE) for responsive progress without constant browser polling. Stages include cache lookup, caption checks, audio download, model loading, transcription, formatting, saving, and caching. Whisper segment timestamps advance the progress bar during transcription instead of leaving the UI stuck at a fixed percentage. Chunked multi-hour jobs map each chunk's progress back onto the complete video timeline.
 
+For `trycloudflare.com` Quick Tunnels, where Cloudflare does not support SSE, the server intentionally returns a one-shot event so the existing browser fallback switches to normal JSON polling. Named Cloudflare Tunnels and LAN access keep true SSE.
+
 ## Configuration
 
 Copy `.env.example` to `.env` if you want overrides. Useful settings include:
@@ -84,7 +86,7 @@ RESULT_RETENTION_DAYS=10
 
 Only public HTTP(S) URLs are accepted. Credentials, localhost, private/link-local/reserved addresses, and unsupported schemes are rejected. User URLs are passed to `yt-dlp` through its Python API rather than shell concatenation. Generated paths are constrained to the configured data directory. DRM/login bypass and cookies are not supported.
 
-The Web UI uses external JavaScript event listeners, allowing a strict `script-src 'self'` Content Security Policy.
+The Web UI uses external JavaScript event listeners, allowing a strict `script-src 'self'` Content Security Policy. Public-tunnel rate limiting uses Cloudflare's validated client IP only when the connection to Uvicorn itself comes from loopback, so direct LAN users cannot spoof proxy headers to evade rate limits.
 
 ## Retention
 
@@ -103,7 +105,7 @@ GET /health
 GET /ready
 ```
 
-`/health` reports FFmpeg, yt-dlp, the transcription engine, and the adaptive runtime choice without loading a Whisper model.
+`/health` reports FFmpeg, ffprobe, yt-dlp, the transcription engine, adaptive runtime choice, bind/port information, and long-form chunk settings without loading a Whisper model.
 
 ## Windows
 
@@ -120,6 +122,30 @@ Verify FFmpeg when needed:
 ```powershell
 python -c "import shutil; print(shutil.which('ffmpeg')); print(shutil.which('ffprobe'))"
 ```
+
+## Windows LAN + Free Public Preview
+
+The one-command launcher starts Uvicorn on all local interfaces, verifies `/ready`, prints the local/LAN URLs, applies the unlimited long-form settings, locates FFmpeg, locates or downloads `cloudflared`, and starts a free Quick Tunnel:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start_network_public.ps1
+```
+
+For LAN-only use:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start_network_public.ps1 -LanOnly
+```
+
+If another device on the same private Windows network cannot reach the printed LAN address, open PowerShell as Administrator once and run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\enable_lan_firewall.ps1
+```
+
+The firewall helper opens only the configured TCP port and only for Windows networks classified as **Private**.
+
+A Quick Tunnel creates a temporary random `https://*.trycloudflare.com` address. It is ideal for team preview/testing, but it is not a production SLA deployment and the hostname changes when `cloudflared` restarts. For a stable production hostname, use a named Cloudflare Tunnel with a Cloudflare account and a domain, and run `cloudflared` as a Windows service.
 
 ## CI
 
