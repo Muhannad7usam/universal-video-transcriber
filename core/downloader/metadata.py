@@ -15,6 +15,14 @@ def ydl_base():
         "fragment_retries": 2,
         "concurrent_fragment_downloads": 4,
         "nocheckcertificate": False,
+        # Cloud/datacenter IPs are increasingly challenged by YouTube. The
+        # cloud image installs a yt-dlp PO-token provider; mweb is the client
+        # recommended by yt-dlp for automatic GVS PO-token use.
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["mweb"],
+            },
+        },
     }
 
     ffmpeg = shutil.which("ffmpeg")
