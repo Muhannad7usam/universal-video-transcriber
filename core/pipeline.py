@@ -7,7 +7,7 @@ from core.downloader.metadata import extract_info, platform_name
 from core.subtitles.engine import find_usable_caption, download_caption
 from core.subtitles.normalize import normalize_segments
 from core.downloader.audio import download_audio
-from core.transcription.whisper_engine import transcribe_audio
+from core.transcription.engine import transcribe_audio
 from core.formatting.transcript import (
     clean_transcript,
     timestamped_transcript,
@@ -45,8 +45,6 @@ def _caption_output_looks_usable(segments, clean: str, duration: float | None) -
     if len(words) < 3:
         return False
 
-    # Reject obviously incomplete caption tracks, but do not penalize naturally
-    # sparse speech too aggressively.
     if duration and duration >= 120:
         minutes = duration / 60
         if len(words) / max(minutes, 1) < 4:
@@ -97,9 +95,6 @@ def run_job(
         duration = info.get("duration")
         tier = duration_tier(duration)
 
-        # Zero means unlimited. A deployment can still opt into an explicit cap
-        # without changing code, but the default product supports extremely long
-        # videos and lets the chunked transcription engine bound memory use.
         if (
             duration
             and settings.max_video_duration_seconds > 0
@@ -152,7 +147,11 @@ def run_job(
                 segments = []
 
         if not clean:
-            method = "whisper"
+            method = (
+                "cloudflare whisper"
+                if settings.transcription_provider.strip().lower() == "cloudflare"
+                else "whisper"
+            )
 
             def download_progress(ratio: float):
                 progress(25 + int(max(0.0, min(1.0, ratio)) * 20), "downloading_audio")
