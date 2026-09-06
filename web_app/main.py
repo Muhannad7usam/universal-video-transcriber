@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import json
 import time
 import uuid
@@ -25,7 +26,7 @@ from scripts.cleanup import cleanup
 store = JobStore(settings.jobs_dir / "jobs.db")
 executor = ThreadPoolExecutor(max_workers=settings.max_concurrent_jobs)
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
-app = FastAPI(title="Universal Video Transcriber", version="1.2.0")
+app = FastAPI(title="Universal Video Transcriber", version="1.3.0")
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 _rate = {}
 _RATE_WINDOW = 600
@@ -53,14 +54,50 @@ def _normalize_language(value: str | None) -> str | None:
     return code
 
 
+def _valid_ip(value: str | None) -> str | None:
+    if not value:
+        return None
+    value = value.strip()
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError:
+        return None
+
+
+def _client_key(request: Request) -> str:
+    """Return a stable per-client key without trusting arbitrary proxy headers.
+
+    cloudflared connects to Uvicorn from loopback. Only in that case do we trust
+    Cloudflare's CF-Connecting-IP header; direct LAN clients are keyed by their
+    actual socket address and cannot spoof their rate-limit identity.
+    """
+    peer = request.client.host if request.client else None
+    peer_ip = _valid_ip(peer)
+    if peer_ip:
+        try:
+            if ipaddress.ip_address(peer_ip).is_loopback:
+                cf_ip = _valid_ip(request.headers.get("cf-connecting-ip"))
+                if cf_ip:
+                    return cf_ip
+        except ValueError:
+            pass
+        return peer_ip
+    return "unknown"
+
+
 def _rate_check(request: Request):
     now = time.monotonic()
-    key = request.client.host if request.client else "unknown"
+    key = _client_key(request)
     hits = [t for t in _rate.get(key, []) if now - t < _RATE_WINDOW]
     if len(hits) >= _RATE_LIMIT:
         raise HTTPException(429, "Too many requests. Please try again later.")
     hits.append(now)
     _rate[key] = hits
+
+
+def _is_quick_tunnel(request: Request) -> bool:
+    host = (request.headers.get("host") or "").split(":", 1)[0].lower()
+    return host.endswith(".trycloudflare.com")
 
 
 def submit(url, title, group_id=None, item_index=None, language=None):
@@ -87,10 +124,15 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; img-src 'self' https: data:; style-src 'self'; "
         "script-src 'self'; connect-src 'self'"
     )
+
+    forwarded_proto = (request.headers.get("x-forwarded-proto") or "").lower()
+    if request.url.scheme == "https" or forwarded_proto == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000"
 
     if request.url.path.startswith("/api/") or request.url.path in {"/health", "/ready"}:
         response.headers["Cache-Control"] = "no-store"
@@ -141,16 +183,28 @@ async def health():
     return {
         "status": "ok",
         "ffmpeg": shutil.which("ffmpeg") is not None,
+        "ffprobe": shutil.which("ffprobe") is not None,
         "yt_dlp": y,
         "transcription_engine": w,
         "runtime": runtime_info(),
+        "network": {
+            "bind_host": settings.host,
+            "port": settings.port,
+        },
+        "long_form": {
+            "duration_limit_seconds": settings.max_video_duration_seconds,
+            "chunk_threshold_seconds": settings.long_video_chunk_threshold_seconds,
+            "chunk_seconds": settings.long_video_chunk_seconds,
+            "chunk_overlap_seconds": settings.long_video_chunk_overlap_seconds,
+        },
     }
 
 
 @app.get("/ready")
 async def ready():
     h = await health()
-    return h if all(h[k] for k in ("ffmpeg", "yt_dlp", "transcription_engine")) else JSONResponse(h, status_code=503)
+    required = ("ffmpeg", "ffprobe", "yt_dlp", "transcription_engine")
+    return h if all(h[k] for k in required) else JSONResponse(h, status_code=503)
 
 
 @app.get("/api/languages")
@@ -286,6 +340,21 @@ async def events(job_id: str, request: Request):
     if not store.get(job_id):
         raise HTTPException(404, "Job not found")
 
+    # TryCloudflare Quick Tunnels buffer SSE and officially do not support it.
+    # Return one event and close there; the existing browser EventSource error
+    # handler then switches to JSON polling. Named tunnels and LAN keep real SSE.
+    if _is_quick_tunnel(request):
+        async def one_shot():
+            j = store.get(job_id)
+            if j:
+                yield f"data: {json.dumps(j, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(
+            one_shot(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     async def gen():
         last = None
         while True:
@@ -311,6 +380,18 @@ async def events(job_id: str, request: Request):
 
 @app.get("/api/groups/{group_id}/events")
 async def group_events(group_id: str, request: Request):
+    if _is_quick_tunnel(request):
+        async def one_shot():
+            jobs = store.group(group_id)
+            payload = json.dumps({"group_id": group_id, "jobs": jobs}, ensure_ascii=False)
+            yield f"data: {payload}\n\n"
+
+        return StreamingResponse(
+            one_shot(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     async def gen():
         last = None
         while True:
