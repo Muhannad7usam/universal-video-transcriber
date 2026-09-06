@@ -1,10 +1,67 @@
+import base64
+import os
 import shutil
 from pathlib import Path
 
 from core.security.urls import validate_media_url
 
 
+_COOKIE_PATH = Path("/tmp/uvt-youtube-cookies.txt")
+
+
+def _youtube_cookiefile() -> str | None:
+    """Materialize optional YouTube cookies from a secret environment variable.
+
+    The public repository never stores account cookies. Cloud hosts can provide
+    a Mozilla/Netscape cookies.txt file as base64 in YOUTUBE_COOKIES_B64. The
+    decoded file is written only inside the ephemeral container with mode 0600.
+    """
+    encoded = os.getenv("YOUTUBE_COOKIES_B64", "").strip()
+    if not encoded:
+        return None
+
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+        text = raw.decode("utf-8-sig")
+    except Exception as exc:
+        raise RuntimeError("YOUTUBE_COOKIES_B64 is not valid base64 UTF-8 data.") from exc
+
+    # yt-dlp expects Mozilla/Netscape cookie-file format and LF newlines on Linux.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    first_line = text.split("\n", 1)[0].strip()
+    if first_line not in {"# Netscape HTTP Cookie File", "# HTTP Cookie File"}:
+        raise RuntimeError(
+            "YOUTUBE_COOKIES_B64 must contain a Mozilla/Netscape cookies.txt file."
+        )
+
+    if not _COOKIE_PATH.exists() or _COOKIE_PATH.read_text(encoding="utf-8") != text:
+        _COOKIE_PATH.write_text(text, encoding="utf-8", newline="\n")
+        os.chmod(_COOKIE_PATH, 0o600)
+
+    return str(_COOKIE_PATH)
+
+
 def ydl_base():
+    cookiefile = _youtube_cookiefile()
+
+    # Anonymous cloud traffic first tries the PO-token path. When YouTube has
+    # flagged the hosting provider's egress IP, optional account cookies are a
+    # separate fallback. Logged-in sessions use the normal/default clients
+    # first because some mweb combinations can still be rejected with cookies.
+    if cookiefile:
+        youtube_args = {
+            "player_client": ["default", "web_embedded", "mweb"],
+            "pot_trace": ["true"],
+        }
+        youtubetab_args = {}
+    else:
+        youtube_args = {
+            "player_client": ["mweb", "android_vr", "web_embedded", "tv"],
+            "player_skip": ["webpage", "configs"],
+            "pot_trace": ["true"],
+        }
+        youtubetab_args = {"skip": ["webpage"]}
+
     opts = {
         "quiet": True,
         "no_warnings": True,
@@ -16,26 +73,17 @@ def ydl_base():
         "concurrent_fragment_downloads": 4,
         "nocheckcertificate": False,
         "source_address": "0.0.0.0",
-        # On cloud/datacenter IPs the normal youtube.com webpage can be the
-        # request that triggers "Sign in to confirm you're not a bot" before
-        # PO-token-backed player requests are even attempted. Skip that page
-        # and ask several current Innertube clients so one blocked client does
-        # not end the extraction. mweb remains first so the BgUtils provider
-        # can supply its GVS PO token automatically.
         "extractor_args": {
-            "youtube": {
-                "player_client": ["mweb", "android_vr", "web_embedded", "tv"],
-                "player_skip": ["webpage", "configs"],
-                "pot_trace": ["true"],
-            },
-            "youtubetab": {
-                "skip": ["webpage"],
-            },
+            "youtube": youtube_args,
+            "youtubetab": youtubetab_args,
             "youtubepot-bgutilhttp": {
                 "base_url": ["http://127.0.0.1:4416"],
             },
         },
     }
+
+    if cookiefile:
+        opts["cookiefile"] = cookiefile
 
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg:
