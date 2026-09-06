@@ -49,17 +49,14 @@ $env:CLEANUP_INTERVAL_HOURS = "24"
 $env:TRANSCRIPTION_CACHE_ENABLED = "true"
 
 Write-Host "Starting Universal Video Transcriber..." -ForegroundColor Cyan
-$server = Start-Process \
-    -FilePath $python \
-    -ArgumentList @(
-        "-m", "uvicorn", "web_app.main:app",
-        "--host", "0.0.0.0",
-        "--port", "$Port",
-        "--proxy-headers",
-        "--forwarded-allow-ips", "127.0.0.1"
-    ) \
-    -WorkingDirectory $root \
-    -PassThru
+$serverArgs = @(
+    "-m", "uvicorn", "web_app.main:app",
+    "--host", "0.0.0.0",
+    "--port", "$Port",
+    "--proxy-headers",
+    "--forwarded-allow-ips", "127.0.0.1"
+)
+$server = Start-Process -FilePath $python -ArgumentList $serverArgs -WorkingDirectory $root -PassThru
 
 try {
     $ready = $false
@@ -129,10 +126,7 @@ try {
         New-Item -ItemType Directory -Force -Path $toolDir | Out-Null
         $cloudflared = Join-Path $toolDir "cloudflared.exe"
         Write-Host "Downloading cloudflared..." -ForegroundColor Cyan
-        Invoke-WebRequest \
-            -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" \
-            -OutFile $cloudflared \
-            -UseBasicParsing
+        Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile $cloudflared -UseBasicParsing
     }
 
     Write-Host ""
